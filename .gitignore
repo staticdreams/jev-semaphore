@@ -1,0 +1,11 @@
+# Written by Claude Code on every load (API declarations for this build)
+.claude-plugin/types/
+
+# Ledger exports written into projects that use the mod
+.jev-semaphore/
+
+node_modules/
+.DS_Store
+
+# Local Claude Code settings (may hold personal permissions)
+.claude/settings.local.json

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "jev-semaphore",
+  "description": "Jev Semaphore for Claude Code: Jev / Kev model routing for subagents, with a live allocation pane",
+  "owner": {
+    "name": "Peter",
+    "email": "kernelpanic@protonmail.com"
+  },
+  "plugins": [
+    {
+      "name": "jev-semaphore",
+      "source": "./",
+      "description": "Jev (hosted) or Kev (local) picks the model for every subagent; live roster, decision bars, agent graph and context-exchange band; Codex, OpenCode and OpenRouter as external executors",
+      "version": "0.1.0",
+      "category": "development",
+      "homepage": "https://github.com/staticdreams/jev-semaphore",
+      "tags": ["routing", "subagents", "jev", "kev", "codex", "mod"]
+    }
+  ]
+}

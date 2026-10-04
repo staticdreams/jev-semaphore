@@ -1,0 +1,126 @@
+{
+  "name": "jev-semaphore",
+  "version": "0.1.0",
+  "description": "Jev Semaphore for Claude Code: Jev / Kev model routing for subagents, with a live allocation pane, agent graph and context-exchange band",
+  "author": {
+    "name": "Peter",
+    "email": "kernelpanic@protonmail.com"
+  },
+  "homepage": "https://github.com/staticdreams/jev-semaphore",
+  "repository": "https://github.com/staticdreams/jev-semaphore",
+  "license": "MIT",
+  "keywords": [
+    "routing",
+    "subagents",
+    "jev",
+    "kev",
+    "codex",
+    "mod"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "Routing backend",
+      "description": "typesafe = hosted Jev (api.typesafe.ai), openrouter = hosted Jev through OpenRouter, kev-local = your own Kev server, off = heuristic routing only",
+      "default": "typesafe",
+      "options": [
+        "typesafe",
+        "openrouter",
+        "kev-local",
+        "off"
+      ]
+    },
+    "typesafeApiKey": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "Hosted Jev key, settable only via `claude plugin configure` on an installed plugin; otherwise paste it in /jev-semaphore setup (macOS Keychain) or use the 1Password reference below",
+      "sensitive": true,
+      "default": ""
+    },
+    "openrouterApiKey": {
+      "type": "string",
+      "title": "OpenRouter API key",
+      "description": "OpenRouter key, settable only via `claude plugin configure` on an installed plugin; otherwise paste it in /jev-semaphore setup (macOS Keychain) or use the 1Password reference below",
+      "sensitive": true,
+      "default": ""
+    },
+    "typesafeKeyRef": {
+      "type": "string",
+      "title": "TypeSafe key · 1Password ref",
+      "description": "Optional op:// reference (e.g. op://Private/TypeSafe/credential), read with the op CLI at session start; nothing secret is stored",
+      "default": ""
+    },
+    "openrouterKeyRef": {
+      "type": "string",
+      "title": "OpenRouter key · 1Password ref",
+      "description": "Optional op:// reference (e.g. op://Private/OpenRouter/credential), read with the op CLI at session start",
+      "default": ""
+    },
+    "kevUrl": {
+      "type": "string",
+      "title": "Kev server URL",
+      "description": "Base URL of a local Kev server",
+      "default": "http://127.0.0.1:8009"
+    },
+    "kevRepoPath": {
+      "type": "string",
+      "title": "Kev checkout",
+      "description": "Where the kev repository is (or will be) cloned; ~ is your home folder",
+      "default": "~/Projects/kev"
+    },
+    "kevModel": {
+      "type": "string",
+      "title": "Kev model size",
+      "description": "Which Kev checkpoint the managed server runs",
+      "default": "kev-4b",
+      "options": [
+        "kev-0.8b",
+        "kev-4b",
+        "kev-9b",
+        "kev-27b"
+      ]
+    },
+    "kevAutostart": {
+      "type": "boolean",
+      "title": "Start Kev with the session",
+      "description": "When the backend is kev-local, start the managed Kev server if it is not running",
+      "default": false
+    },
+    "routingMode": {
+      "type": "string",
+      "title": "Routing mode",
+      "description": "auto applies Jev's pick to each subagent, recommend only shows it, off disables routing",
+      "default": "auto",
+      "options": [
+        "auto",
+        "recommend",
+        "off"
+      ]
+    },
+    "downgradeFloor": {
+      "type": "number",
+      "title": "Downgrade confidence floor",
+      "description": "Jev must be at least this sure (0-1) before a role moves to a cheaper model",
+      "default": 0.6
+    },
+    "budgetUsd": {
+      "type": "number",
+      "title": "Session budget (USD)",
+      "description": "Soft per-session spend cap shown as a gauge; 0 turns it off",
+      "default": 0
+    },
+    "externals": {
+      "type": "string",
+      "title": "External executors",
+      "description": "Comma-separated: codex-review, codex-image, opencode, openrouter",
+      "default": "codex-review,codex-image,opencode,openrouter"
+    },
+    "openrouterModels": {
+      "type": "string",
+      "title": "OpenRouter worker models",
+      "description": "Comma-separated OpenRouter model slugs offered as cheap workers",
+      "default": "qwen/qwen3-coder,deepseek/deepseek-chat-v3.1,moonshotai/kimi-k2"
+    }
+  }
+}
