@@ -46,7 +46,8 @@ export type KevState = { state: 'stopped' | 'starting' | 'running' | 'failed' | 
 
 export type ExternalId = 'codex' | 'opencode' | 'openrouter'
 
-export type External = { id: ExternalId; isReady: boolean; version: string; detail: string; hint: string }
+/** `canImage`: for Codex, whether its image_generation feature is on (codex_image is only offered then). */
+export type External = { id: ExternalId; isReady: boolean; version: string; detail: string; hint: string; canImage?: boolean }
 
 export type KeySource = 'config' | 'keychain' | '1password' | 'env' | 'missing'
 

@@ -245,9 +245,18 @@ function routingTab(kit: Kit & Record<string, unknown>, c: PaneCtx, d: PaneData,
         <Text bold color={TEXT}>
           Live spawns
         </Text>
-        <Text color={MUTED}>{spawns.length} spawned</Text>
+        <Text color={MUTED}>
+          {spawns.length} this session{d.ledger.length > spawns.length ? ` · ${d.ledger.length} in project` : ''}
+        </Text>
       </Box>
-      {shown.length === 0 && <Text color={MUTED}>none yet</Text>}
+      {shown.length === 0 && (
+        <Text color={MUTED} wrap="wrap">
+          {c.mode === 'off'
+            ? 'Routing is off (/jev-semaphore mode auto), so subagents are not tracked.'
+            : 'No subagents spawned this session. Only Agent spawns appear here; shell commands and tool calls do not.'}
+          {d.ledger.length > 0 ? ` Earlier ones are on the Ledger tab (${d.ledger.length} in this project).` : ''}
+        </Text>
+      )}
       {shown.map(s => spawnRow(kit, s, now, Raster))}
     </Box>
   )

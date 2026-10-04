@@ -48,6 +48,7 @@ export async function detect(host: Host, openrouterKey: string, wanted: readonly
       version: codexOk ? codex.stdout.trim().replace(/^codex-cli\s*/, '') : '',
       detail: codexOk ? codexBits.join(' · ') || 'disabled in /config' : 'not found on PATH',
       hint: codexOk ? (imageOk ? '' : 'codex features enable image_generation') : 'brew install codex  (then: codex login)',
+      canImage: imageOk,
     },
     {
       id: 'opencode',
@@ -88,7 +89,8 @@ export async function registerTools(host: Host, externals: readonly External[], 
     names.push(TOOL.codexReview)
   }
 
-  if (ready('codex') && wanted.includes('codex-image')) {
+  // Offered only when Codex's image_generation feature is actually on; otherwise every call would fail.
+  if (ready('codex') && wanted.includes('codex-image') && externals.some(x => x.id === 'codex' && x.canImage === true)) {
     await host.registerTool({
       name: TOOL.codexImage,
       description:
@@ -148,7 +150,7 @@ export type ToolAnswer = { result: string; isError?: true }
 const fail = (text: string): ToolAnswer => ({ result: text, isError: true })
 
 const out = (r: { exitCode: number; stdout: string; stderr: string }, what: string): ToolAnswer =>
-  r.exitCode === 0 ? { result: r.stdout.trim() || `${what} finished with no output.` } : fail(`${what} failed (exit ${r.exitCode}): ${(r.stderr || r.stdout).slice(-2000)}`)
+  r.exitCode === 0 ? { result: r.stdout.trim() || `${what} finished with no output.` } : fail(`${what} failed (exit ${r.exitCode}): ${redact(r.stderr || r.stdout).slice(-2000)}`)
 
 export async function serve(host: Host, name: string, args: Record<string, unknown>, ctx: { cwd: string; openrouterKey: string; workers: readonly string[] }): Promise<ToolAnswer> {
   const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : '')
@@ -163,9 +165,15 @@ export async function serve(host: Host, name: string, args: Record<string, unkno
         return fail('base must be a branch name')
       }
 
-      const argv = ['codex', 'review', ...(base !== '' ? ['--base', base] : ['--uncommitted'])]
+      // `codex review` takes either a target flag (--uncommitted / --base) or custom instructions, never both,
+      // so with a focus the target is spelled out inside the instructions instead.
+      const target = base !== '' ? `the changes on the current branch against the base branch "${base}"` : 'the uncommitted changes (staged, unstaged and untracked)'
+      const argv =
+        str('focus') === ''
+          ? ['codex', 'review', ...(base !== '' ? ['--base', base] : ['--uncommitted'])]
+          : ['codex', 'review', ` Review ${target}. Pay particular attention to: ${str('focus')}`]
 
-      return out(await run(host, str('focus') !== '' ? [...argv, text('focus')] : argv, 600_000, ctx.cwd), 'codex review')
+      return out(await run(host, argv, 600_000, ctx.cwd), 'codex review')
     }
     case TOOL.codexImage: {
       const path = str('path').replace(/^\/+/, '')
@@ -184,7 +192,7 @@ export async function serve(host: Host, name: string, args: Record<string, unkno
       // A file that was already there proves nothing: codex must also have exited cleanly.
       const saved = r.exitCode === 0 && (await host.exists(`${ctx.cwd.replace(/\/+$/, '')}/${path}`))
 
-      return !saved ? fail(`codex did not save ${path} (exit ${r.exitCode}). ${(r.stderr || r.stdout).slice(-800)}`) : { result: `Saved ${path}` }
+      return !saved ? fail(`codex did not save ${path} (exit ${r.exitCode}). ${redact(r.stderr || r.stdout).slice(-800)}`) : { result: `Saved ${path}` }
     }
     case TOOL.opencode:
       if (str('model').startsWith('-')) {
@@ -260,13 +268,13 @@ export async function kevInstall(host: Host, p: KevPaths): Promise<{ ok: boolean
     const clone = await run(host, ['git', 'clone', '--depth', '1', 'https://github.com/jaredpalmer/kev', p.repo], 300_000)
 
     if (clone.exitCode !== 0) {
-      return { ok: false, detail: `git clone failed: ${clone.stderr.slice(-300)}` }
+      return { ok: false, detail: `git clone failed: ${redact(clone.stderr).slice(-300)}` }
     }
   }
 
   const sync = await run(host, ['uv', 'sync', '--python', '3.12', '--extra', 'serve'], 600_000, p.repo)
 
-  return sync.exitCode === 0 ? { ok: true, detail: 'installed' } : { ok: false, detail: `uv sync failed: ${sync.stderr.slice(-300)}` }
+  return sync.exitCode === 0 ? { ok: true, detail: 'installed' } : { ok: false, detail: `uv sync failed: ${redact(sync.stderr).slice(-300)}` }
 }
 
 /**
@@ -281,7 +289,22 @@ export async function kevStart(host: Host, p: KevPaths): Promise<{ ok: boolean; 
     `echo $! > ${quote(p.pid)} && cat ${quote(p.pid)}`
   const r = await run(host, ['sh', '-c', cmd], 15_000)
 
-  return r.exitCode === 0 ? { ok: true, detail: `pid ${r.stdout.trim()}` } : { ok: false, detail: r.stderr.slice(-300) || `exit ${r.exitCode}` }
+  return r.exitCode === 0 ? { ok: true, detail: `pid ${r.stdout.trim()}` } : { ok: false, detail: redact(r.stderr).slice(-300) || `exit ${r.exitCode}` }
+}
+
+/** The command line a managed Kev runs; Stop and the double-start check match on it, not on a loose substring. */
+const KEV_CMD = 'kev\\.serve --run jaredpalmer/'
+
+/** The pid of the Kev this mod started, if that process is still alive and still Kev; null otherwise. */
+export async function kevManagedPid(host: Host, p: KevPaths): Promise<string | null> {
+  const cmd =
+    `[ -f ${quote(p.pid)} ] || exit 0; pid=$(cat ${quote(p.pid)}); ` +
+    `case "$pid" in ''|*[!0-9]*) exit 0;; esac; ` +
+    `ps -p "$pid" -o command= 2>/dev/null | grep -q '${KEV_CMD}' && echo "$pid"`
+  const r = await run(host, ['sh', '-c', cmd], 10_000)
+  const pid = r.stdout.trim()
+
+  return /^\d+$/.test(pid) ? pid : null
 }
 
 /**
@@ -293,11 +316,11 @@ export async function kevStop(host: Host, p: KevPaths): Promise<{ ok: boolean; d
     `[ -f ${quote(p.pid)} ] || { echo 'no managed Kev (no pid file)'; exit 0; }; ` +
     `pid=$(cat ${quote(p.pid)}); rm -f ${quote(p.pid)}; ` +
     `case "$pid" in ''|*[!0-9]*) echo 'pid file was invalid'; exit 0;; esac; ` +
-    `if ps -p "$pid" -o command= 2>/dev/null | grep -q 'kev\\.serve'; then kill "$pid" && echo "stopped pid $pid"; ` +
+    `if ps -p "$pid" -o command= 2>/dev/null | grep -q '${KEV_CMD}'; then kill "$pid" && echo "stopped pid $pid"; ` +
     `else echo "pid $pid is no longer Kev; nothing killed"; fi`
   const r = await run(host, ['sh', '-c', cmd], 10_000)
 
-  return { ok: r.exitCode === 0, detail: (r.stdout.trim() || r.stderr.trim()).slice(0, 200) }
+  return { ok: r.exitCode === 0, detail: redact(r.stdout.trim() || r.stderr.trim()).slice(0, 200) }
 }
 
 export async function kevLog(host: Host, p: KevPaths, lines = 8): Promise<string[]> {

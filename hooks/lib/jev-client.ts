@@ -67,17 +67,19 @@ export const backendLabel = (b: Backend): string =>
   b === 'typesafe' ? 'hosted · typesafe' : b === 'openrouter' ? 'hosted · openrouter' : b === 'kev-local' ? 'local · kev' : 'off · heuristic'
 
 /** Parses a reply body, keeping only well-formed answers. */
-export function parseReply(text: string, latencyMs: number): JevReply {
+export function parseReply(text: string, latencyMs: number, secrets: readonly string[] = []): JevReply {
+  // Redact first, then shorten: shortening first can leave a key prefix the redactor no longer recognises.
+  const clip = (t: string, n: number) => redact(t, secrets).slice(0, n)
   let body: unknown
 
   try {
     body = JSON.parse(text)
   } catch {
-    return { ok: false, error: `unreadable reply: ${text.slice(0, 120)}`, latencyMs }
+    return { ok: false, error: `unreadable reply: ${clip(text, 120)}`, latencyMs }
   }
 
   if (typeof body !== 'object' || body === null || !('answers' in body)) {
-    const message = typeof body === 'object' && body !== null && 'error' in body ? JSON.stringify((body as { error: unknown }).error) : text.slice(0, 120)
+    const message = typeof body === 'object' && body !== null && 'error' in body ? clip(JSON.stringify((body as { error: unknown }).error), 200) : clip(text, 120)
 
     return { ok: false, error: message, latencyMs }
   }
@@ -120,19 +122,20 @@ export async function ask(host: Host, s: Settings, state: unknown, questions: Re
     return { ok: false, error: endpoint.error, latencyMs: 0 }
   }
 
+  const keys = [s.typesafeApiKey, s.openrouterApiKey]
   const request = host
     .fetch(endpoint.url, { method: 'POST', headers: endpoint.headers, body: JSON.stringify({ state, model: endpoint.model, questions }) })
     .then(async r => {
       const latencyMs = (await host.now()) - started
 
-      return r.ok ? parseReply(r.text, latencyMs) : ({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 160)}`, latencyMs } as JevReply)
+      return r.ok ? parseReply(r.text, latencyMs, keys) : ({ ok: false, error: `HTTP ${r.status}: ${redact(r.text, keys).slice(0, 160)}`, latencyMs } as JevReply)
     })
-    .catch(async (error: unknown): Promise<JevReply> => ({ ok: false, error: String(error).slice(0, 160), latencyMs: (await host.now()) - started }))
+    .catch(async (error: unknown): Promise<JevReply> => ({ ok: false, error: redact(String(error), keys).slice(0, 160), latencyMs: (await host.now()) - started }))
 
   const timeout = host.sleep(timeoutMs).then((): JevReply => ({ ok: false, error: `no answer within ${timeoutMs}ms`, latencyMs: timeoutMs }))
   const reply = await Promise.race([request, timeout])
 
-  return reply.ok ? reply : { ...reply, error: redact(reply.error, [s.typesafeApiKey, s.openrouterApiKey]) }
+  return reply.ok ? reply : { ...reply, error: redact(reply.error, keys) }
 }
 
 /** A one-question probe for the Setup tab's connection test. */

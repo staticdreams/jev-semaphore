@@ -32,7 +32,7 @@ Running every subagent on your main model is the easy default and the expensive 
 - 🛡️ **Guard rails, not guesses.** A downgrade floor, a risk check and per-role pins stop it from cutting corners.
 - 👀 **Everything visible.** A live roster, ranked decision bars, an agent graph and a cost ledger show why each model was picked.
 - 🔌 **Beyond Claude.** Codex reviews code and generates images, and OpenCode and OpenRouter models take cheap drafting.
-- 🧯 **Bounded waits.** Each routing call waits at most 3.5 s (6 s for local Kev); after that a transparent heuristic decides and says so.
+- 🧯 **Bounded waits.** The request to Jev is cut off after 3.5 s (6 s for local Kev); after that a transparent heuristic decides and says so.
 
 <br>
 
@@ -112,7 +112,7 @@ flowchart LR
 | Risk | If `risky ≥ 0.7`, the task runs on at least **sonnet-5.5** (an explicit pin still wins). |
 | Pins | `/jev-semaphore pin <role> <model>` fixes a role agent's model. Jev still scores it, but the pin decides. |
 
-If Jev doesn't answer within **3.5 s** (hosted) or **6 s** (Kev), the score alone decides and the decision is labelled `heuristic`; the spawn is never held up longer than that. Malformed replies are treated the same way.
+If Jev doesn't answer within **3.5 s** (hosted) or **6 s** (Kev), the score alone decides and the decision is labelled `heuristic`; the Jev request is cut off at that point (a little local bookkeeping happens around it). A reply with malformed or out-of-range probabilities is rejected and handled the same way.
 
 <br>
 
@@ -130,7 +130,7 @@ Jev Semaphore registers seven subagent types and nudges the main model to delega
 | `jev-semaphore:reviewer` | ![sonnet](https://img.shields.io/badge/-sonnet-d19a66?style=flat-square) | Independent review: **Codex first**, then verified |
 | `jev-semaphore:artist` | ![haiku](https://img.shields.io/badge/-haiku-56b6c2?style=flat-square) | Images via **Codex image generation** |
 
-A plain `general-purpose` spawn that Jev classifies as a review or an image job is steered to the reviewer or artist.
+A plain `general-purpose` spawn that Jev classifies as a review or an image job is steered to the reviewer or artist, but only when the matching Codex tool is available.
 
 <br>
 
@@ -210,13 +210,13 @@ These are detected automatically when a session starts:
 
 | Executor | Used for | Exposed as |
 |---|---|---|
-| `codex` | Code review; image generation when its `image_generation` feature is on | `codex_review`, `codex_image` |
+| `codex` | Code review; image generation (`codex_image` is only offered when Codex's `image_generation` feature is on) | `codex_review`, `codex_image` |
 | `opencode` | Running a task on another model | `opencode_run` |
 | OpenRouter | Cheap bulk drafting (only when your key is valid) | `openrouter_draft` |
 
 Every call goes through your Claude Code permission rules first: a denied tool is refused, an allowed one runs, and otherwise you are asked to allow or deny that specific call. With no one to ask, as in a `-p` run, the answer is no.
 
-Anything missing shows a one-line fix on the Setup tab. Turn individual executors on or off with the `externals` setting.
+Anything missing shows a one-line fix on the Setup tab; after fixing it, press **Re-detect** and the newly available tools are registered straight away. Turn individual executors on or off with the `externals` setting.
 
 </details>
 
@@ -262,7 +262,7 @@ Anything missing shows a one-line fix on the Setup tab. Turn individual executor
 
 ## 📏 Honest numbers
 
-- Prices are Anthropic API list prices **as of 2026-09-25**, labelled as estimates.
+- Prices are Anthropic API list prices **as of 2026-10-04**, labelled as estimates. Cache hits use each model's published rate and 5-minute cache writes 1.25× input; 1-hour cache writes are not distinguished.
 - The capability tier is this mod's heuristic, not a benchmark. SWE-bench stays `unknown` until a dated, sourced figure is added to `hooks/lib/catalog.ts`.
 - The Jev/Kev call cost uses the $0.04/MTok input price quoted for OpenRouter's listing, shown with `≈`.
 - Codex, OpenCode and OpenRouter costs are not estimated.

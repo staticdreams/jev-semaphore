@@ -135,21 +135,32 @@ function kevPathsOf($: EngineInterface) {
 /** Runs `fn` on a timer, so long work (installs, probes) outlives the press or command that asked for it. */
 function later($: EngineInterface, fn: () => Promise<unknown>) {
   return $.clock.after(1, () => {
-    void fn().catch(error => $.ui.log(`jev-semaphore: ${String(error)}`, { to: 'debug' }))
+    void fn().catch(error => $.ui.log(`jev-semaphore: ${redact(String(error), [R.settings.typesafeApiKey, R.settings.openrouterApiKey])}`, { to: 'debug' }))
   })
 }
 
 /* ---------------------------------------------------------------- ledger */
 
+/**
+ * Each project keeps its own ledger under its own store key, so one project's activity never evicts
+ * another's history and an export can only ever see this project's rows.
+ */
 async function ledger($: EngineInterface): Promise<LedgerRow[]> {
-  const rows = await $.store.get(S.LEDGER_KEY)
+  const rows = await $.store.get(S.ledgerKey(R.cwd))
 
-  return Array.isArray(rows) ? (rows as LedgerRow[]) : []
-}
+  if (Array.isArray(rows)) {
+    return rows as LedgerRow[]
+  }
 
-/** This project's rows only; other projects' task descriptions never show here or in an export. */
-async function projectLedger($: EngineInterface): Promise<LedgerRow[]> {
-  return (await ledger($)).filter(r => r.project === R.cwd)
+  // First read under the per-project key: carry over this project's rows from the old shared ledger.
+  const shared = await $.store.get(S.LEDGER_KEY)
+  const mine = Array.isArray(shared) ? (shared as LedgerRow[]).filter(r => r.project === R.cwd) : []
+
+  if (mine.length > 0) {
+    await $.store.set(S.ledgerKey(R.cwd), mine.slice(-300))
+  }
+
+  return mine
 }
 
 /** Each subagent's own working folder (a spawn may set `cwd`, e.g. a worktree), so external tools run where it works. */
@@ -159,14 +170,14 @@ const agentCwd = new Map<string, string>()
 let ledgerQueue: Promise<unknown> = Promise.resolve()
 
 function writeLedger($: EngineInterface, fn: (rows: LedgerRow[]) => LedgerRow[]): Promise<void> {
-  const write = ledgerQueue.then(async () => $.store.set(S.LEDGER_KEY, fn(await ledger($)).slice(-300)))
+  const write = ledgerQueue.then(async () => $.store.set(S.ledgerKey(R.cwd), fn(await ledger($)).slice(-300)))
   ledgerQueue = write.catch(() => undefined)
 
   return write.then(() => undefined)
 }
 
 async function exportLedger($: EngineInterface): Promise<string> {
-  const rows = await projectLedger($)
+  const rows = await ledger($)
   const day = new Date().toISOString().slice(0, 10)
   const path = `${R.cwd}/.jev-semaphore/ledger-${day}.md`
   const lines = [
@@ -253,6 +264,14 @@ async function kevAction($: EngineInterface, what: 'install' | 'start' | 'stop')
     }
   }
 
+  // A second Start would launch a server that fails on the busy port and overwrite the pid of the one that works.
+  if ((await X.kevHealth(hostOf($), p.url)).isUp || (await X.kevManagedPid(hostOf($), p)) !== null) {
+    await refreshKev($)
+    watchKev($)
+
+    return 'Kev is already running (or still starting); press Stop first to restart it.'
+  }
+
   await update($, setupState, (s): Setup => ({ ...s, kev: { ...s.kev, state: 'starting', detail: `starting jaredpalmer/${p.model} on :${p.port} (first start downloads the model)` } }))
   const r = await X.kevStart(hostOf($), p)
 
@@ -309,7 +328,7 @@ function paneCtx($: EngineInterface, mode: Mode): PaneCtx {
       kevInstall: () => void later($, () => kevAction($, 'install')),
       kevStart: () => void later($, () => kevAction($, 'start')),
       kevStop: () => void later($, () => kevAction($, 'stop')),
-      detect: () => void later($, () => detectAll($)),
+      detect: () => void later($, () => registerExternals($)),
       setBackend: v => void later($, () => setBackend($, v)),
       setMode: m => void update($, modeState, () => m),
       saveKey: (which, key) => void later($, () => saveKey($, which, key)),
@@ -360,7 +379,7 @@ async function resolveKeys($: EngineInterface) {
         return { key, info: { source: '1password', hint: mask(key) } }
       }
 
-      error = `op read failed: ${op.stderr.trim().slice(0, 100)}`
+      error = `op read failed: ${redact(op.stderr.trim()).slice(0, 100)}`
     }
 
     if (fromEnv !== undefined && fromEnv !== '') {
@@ -430,6 +449,12 @@ async function removeKey($: EngineInterface, which: Which) {
 async function registerExternals($: EngineInterface) {
   const externals = await detectAll($)
   R.tools = await X.registerTools(hostOf($), externals, R.o.externals, R.o.workers)
+
+  // The role prompts say which external tools exist (the artist's "no image generator", the reviewer's
+  // Codex-first step), so they are re-registered, which replaces them, whenever the tools change.
+  for (const spec of roleAgents(R.tools)) {
+    await $.agent.register(spec).catch((error: unknown) => $.ui.log(`jev-semaphore: agent ${spec.name} not registered: ${redact(String(error))}`, { to: 'debug' }))
+  }
 }
 
 /* ----------------------------------------------------------- permission */
@@ -526,10 +551,6 @@ export const register: Register = (on, options) => {
 
     await resolveKeys($)
     await registerExternals($)
-
-    for (const spec of roleAgents(R.tools)) {
-      await $.agent.register(spec).catch((error: unknown) => $.ui.log(`jev-semaphore: agent ${spec.name} not registered: ${String(error)}`, { to: 'debug' }))
-    }
 
     if (R.o.backend === 'kev-local') {
       await refreshKev($)
@@ -633,14 +654,21 @@ export const register: Register = (on, options) => {
     const mode = await modeOf($)
 
     if (mode === 'off' || e.fork || e.isTeammate === true) {
-      return next(e)
+      // Not routed, but its working folder still matters: our external tools must run where it works.
+      const passed = await next(e)
+
+      if (passed.agentId !== undefined && e.cwd !== undefined) {
+        agentCwd.set(passed.agentId, e.cwd)
+      }
+
+      return passed
     }
 
     const ours = e.subagentType.startsWith(AGENT_PREFIX) ? e.subagentType.slice(AGENT_PREFIX.length) : null
     const role = ours !== null && ROLES.includes(ours) ? ours : null
     const parentModel = e.parentModel ?? R.mainModel
     const current = labelOf(e.model ?? (role !== null ? (DEFAULT_MODEL[role] ?? parentModel) : parentModel))
-    const [pins, totals, history] = await Promise.all([read($, pinsState), read($, totalsState), projectLedger($)])
+    const [pins, totals, history] = await Promise.all([read($, pinsState), read($, totalsState), ledger($)])
     const input: RouteInput = {
       role,
       description: e.description,
@@ -816,7 +844,7 @@ export const register: Register = (on, options) => {
       read($, totalsState),
       read($, pinsState),
       read($, setupState),
-      projectLedger($),
+      ledger($),
       $.clock.now(),
       modeOf($),
     ])

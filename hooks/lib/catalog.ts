@@ -7,7 +7,7 @@
  * dated, sourced SWE-bench figure is added, and the UI shows "unknown" for it.
  */
 
-export const PRICES_AS_OF = '2026-09-25'
+export const PRICES_AS_OF = '2026-10-04'
 
 export type Provider = 'anthropic' | 'codex' | 'opencode' | 'openrouter'
 
@@ -17,10 +17,12 @@ export type Model = {
   provider: Provider
   /** For Anthropic models, the alias `agent.spawn` takes. */
   alias?: 'fable' | 'opus' | 'sonnet' | 'haiku'
-  /** Prefixes of resolved ids (`claude-opus-5-5`) this entry prices. */
+  /** Resolved ids (`claude-opus-5-5`) this entry prices; a dated (`-20251001`) or `[1m]` form of one matches too. */
   ids: readonly string[]
   inputUsd: number | null
   outputUsd: number | null
+  /** Cache hits and refreshes, per the published price table (not a fixed fraction of input). */
+  cacheReadUsd?: number
   contextK: number | null
   /** Relative latency, 0 fastest to 1 slowest. */
   latency: number
@@ -30,10 +32,10 @@ export type Model = {
 }
 
 export const ANTHROPIC: readonly Model[] = [
-  { label: 'fable-5.1', provider: 'anthropic', alias: 'fable', ids: ['claude-fable-5-1'], inputUsd: 10, outputUsd: 50, contextK: 1000, latency: 0.95, capability: 1, swe: null, color: 0xb794f6 },
-  { label: 'opus-5.5', provider: 'anthropic', alias: 'opus', ids: ['claude-opus-5-5'], inputUsd: 4, outputUsd: 20, contextK: 1000, latency: 0.7, capability: 0.9, swe: null, color: 0xf0a06a },
-  { label: 'sonnet-5.5', provider: 'anthropic', alias: 'sonnet', ids: ['claude-sonnet-5-5'], inputUsd: 2, outputUsd: 10, contextK: 1000, latency: 0.45, capability: 0.78, swe: null, color: 0xf2c76b },
-  { label: 'haiku-4.5', provider: 'anthropic', alias: 'haiku', ids: ['claude-haiku-4-5'], inputUsd: 1, outputUsd: 5, contextK: 200, latency: 0.15, capability: 0.55, swe: null, color: 0x6fd3c7 },
+  { label: 'fable-5.1', provider: 'anthropic', alias: 'fable', ids: ['claude-fable-5-1'], inputUsd: 10, outputUsd: 50, cacheReadUsd: 0.25, contextK: 1000, latency: 0.95, capability: 1, swe: null, color: 0xb794f6 },
+  { label: 'opus-5.5', provider: 'anthropic', alias: 'opus', ids: ['claude-opus-5-5'], inputUsd: 4, outputUsd: 20, cacheReadUsd: 0.2, contextK: 1000, latency: 0.7, capability: 0.9, swe: null, color: 0xf0a06a },
+  { label: 'sonnet-5.5', provider: 'anthropic', alias: 'sonnet', ids: ['claude-sonnet-5-5'], inputUsd: 2, outputUsd: 10, cacheReadUsd: 0.2, contextK: 1000, latency: 0.45, capability: 0.78, swe: null, color: 0xf2c76b },
+  { label: 'haiku-4.5', provider: 'anthropic', alias: 'haiku', ids: ['claude-haiku-4-5'], inputUsd: 1, outputUsd: 5, cacheReadUsd: 0.1, contextK: 200, latency: 0.15, capability: 0.55, swe: null, color: 0x6fd3c7 },
 ]
 
 export const CODEX: Model = { label: 'codex', provider: 'codex', ids: [], inputUsd: null, outputUsd: null, contextK: null, latency: 0.8, capability: 0.85, swe: null, color: 0x7ee08a }
@@ -47,7 +49,16 @@ export function openrouterModel(slug: string, inputUsd: number | null = null, ou
 export function modelFor(idOrAlias: string): Model | undefined {
   const id = idOrAlias.toLowerCase()
 
-  return ANTHROPIC.find(m => m.alias === id || m.label === id || m.ids.some(prefix => id.startsWith(prefix)))
+  return ANTHROPIC.find(m => m.alias === id || m.label === id || m.ids.some(known => isVersionOf(id, known)))
+}
+
+/** `id` is exactly `known`, optionally with a date snapshot and/or a context-window suffix; `claude-opus-5-50` is not. */
+function isVersionOf(id: string, known: string): boolean {
+  if (!id.startsWith(known)) {
+    return false
+  }
+
+  return /^(-\d{8})?(\[[^\]]*\])?$/.test(id.slice(known.length))
 }
 
 export const labelOf = (idOrAlias: string | undefined): string => (idOrAlias === undefined ? "inherit" : (modelFor(idOrAlias)?.label ?? idOrAlias))
@@ -63,8 +74,10 @@ export function costOf(model: string, inputTokens: number, outputTokens: number,
     return null
   }
 
-  // Cache reads bill at a tenth of input and 5-minute cache writes at 1.25x, the API's standing ratios.
-  return (inputTokens * m.inputUsd + cacheReadTokens * m.inputUsd * 0.1 + cacheWriteTokens * m.inputUsd * 1.25 + outputTokens * m.outputUsd) / 1_000_000
+  // Cache hits use the model's published rate; 5-minute cache writes bill at 1.25x input (1-hour writes are not distinguished).
+  const cacheReadUsd = m.cacheReadUsd ?? m.inputUsd * 0.1
+
+  return (inputTokens * m.inputUsd + cacheReadTokens * cacheReadUsd + cacheWriteTokens * m.inputUsd * 1.25 + outputTokens * m.outputUsd) / 1_000_000
 }
 
 /** The option text Jev reads for a model. */

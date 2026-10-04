@@ -134,13 +134,21 @@ export function route(input: RouteInput, reply: JevReply | null, opts: { floor: 
   const soft = ANTHROPIC.map((_, i) => Math.exp(((scores[i] ?? 0) - hi) * 12))
   const softSum = soft.reduce((a, b) => a + b, 0)
 
-  // Jev's probabilities are only used when they are finite numbers; anything else falls back to the softmax.
+  // Jev's distribution is used only when it is a real one: every value a finite number in [0, 1], summing to
+  // about 1. Anything else (a string, -3, 2, a partial map) is rejected whole and the softmax decides instead;
+  // clamping a bad value could otherwise turn `2` into a confident p = 1 that clears the floor.
+  const given = ANTHROPIC.map(m => probabilities?.[m.label])
+  const total = given.reduce((a: number, v) => a + (typeof v === 'number' ? v : 0), 0)
+  const usesJev =
+    given.every(v => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1)) &&
+    given.some(v => v !== undefined) &&
+    total > 0.5 &&
+    total < 1.05
   const jevP = (label: string): number | undefined => {
     const v = probabilities?.[label]
 
-    return typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : undefined
+    return usesJev && typeof v === 'number' ? v : undefined
   }
-  const usesJev = ANTHROPIC.some(m => jevP(m.label) !== undefined)
   // Raw values decide the guards; the rounded ones are only for display (0.596 must not pass a 0.60 floor).
   const rawP = new Map(ANTHROPIC.map((m, i) => [m.label, jevP(m.label) ?? (usesJev ? 0 : (soft[i] ?? 0) / softSum)]))
 
@@ -153,7 +161,7 @@ export function route(input: RouteInput, reply: JevReply | null, opts: { floor: 
   const top = candidates[0]!
   const topP = rawP.get(top.model) ?? 0
   const riskyRaw = answers.risky?.noul
-  const risky = typeof riskyRaw === 'number' && Number.isFinite(riskyRaw) ? Math.min(1, Math.max(0, riskyRaw)) : null
+  const risky = typeof riskyRaw === 'number' && Number.isFinite(riskyRaw) && riskyRaw >= 0 && riskyRaw <= 1 ? riskyRaw : null
   const isHeuristic = reply === null || !reply.ok || !usesJev
   let applied = top.model
   let note = reply === null ? 'heuristic · feature fit' : !reply.ok ? `heuristic · ${reply.error}` : usesJev ? 'host validated' : 'heuristic · Jev sent no usable probabilities'
@@ -185,7 +193,8 @@ export function route(input: RouteInput, reply: JevReply | null, opts: { floor: 
       picked: top.model,
       applied: ranOn,
       candidates: candidates.slice(0, 4),
-      source: opts.pin !== undefined ? 'pin' : opts.source,
+      // A reply whose numbers were rejected was decided by the heuristic, whatever backend sent it.
+      source: opts.pin !== undefined ? 'pin' : isHeuristic ? 'heuristic' : opts.source,
       note,
       latencyMs: reply?.latencyMs ?? 0,
       risky,

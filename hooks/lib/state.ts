@@ -15,5 +15,19 @@ export const EMPTY_TOTALS: Totals = { routed: 0, spendUsd: 0, jevCalls: 0, jevCo
 
 /** Ledger rows kept across sessions in `$.store` (the last 300 decisions with their outcome). */
 export const LEDGER_KEY = 'ledger'
+
+/**
+ * The store key of one project's ledger: `ledger:` plus a short hash of its folder (store keys stay short and
+ * free of path characters). Two sessions in the same project still share it; writes within a session are queued.
+ */
+export function ledgerKey(project: string): string {
+  let h = 0x811c9dc5
+
+  for (let i = 0; i < project.length; i++) {
+    h = Math.imul(h ^ project.charCodeAt(i), 0x01000193) >>> 0
+  }
+
+  return `${LEDGER_KEY}:${h.toString(16).padStart(8, '0')}`
+}
 /** `project` is the session's working folder: the store is shared by every project, so views and exports filter on it. */
 export type LedgerRow = Decision & { outcome: 'done' | 'failed' | 'running'; costUsd: number; durationMs: number; project?: string }

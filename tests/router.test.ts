@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { costOf, labelOf } from '../hooks/lib/catalog'
 import { parseReply, redact } from '../hooks/lib/jev-client'
 import { guessRole, questionsFor, route, type RouteInput } from '../hooks/lib/router'
+import { ledgerKey } from '../hooks/lib/state'
 import { bar, Grid } from '../hooks/ui/raster'
 
 const INPUT: RouteInput = {
@@ -68,6 +69,15 @@ describe('routing', () => {
     const routed = route(INPUT, bad, { floor: 0.6, pin: undefined, isApplied: true, source: 'jev' })
     expect(routed.decision.candidates.every(c => c.p >= 0 && c.p <= 1)).toBe(true)
     expect(routed.decision.risky).toBeNull()
+    expect(routed.decision.source).toBe('heuristic')
+  })
+
+  test('an out-of-range probability is rejected, not clamped into a confident downgrade', () => {
+    // Clamped, 2 would become p = 1 and clear the floor; rejected, the heuristic decides and the floor still holds.
+    const bogus = route({ ...INPUT, current: 'sonnet-5.5' }, reply({ 'haiku-4.5': 2 }), { floor: 0.6, pin: undefined, isApplied: true, source: 'jev' })
+    expect(bogus.decision.source).toBe('heuristic')
+    expect(bogus.decision.note).not.toContain('host validated')
+    expect(bogus.decision.candidates.find(c => c.model === 'haiku-4.5')?.p).not.toBe(1)
   })
 
   test('a risky task is raised to at least sonnet', () => {
@@ -108,7 +118,21 @@ describe('catalog and cells', () => {
     // 1M Sonnet cache-write tokens at 1.25x the $2 input price.
     expect(Math.abs((costOf('claude-sonnet-5-5', 0, 0, 0, 1_000_000) ?? 0) - 2.5) < 1e-9).toBe(true)
     expect(costOf('claude-opus-4-6', 1, 1)).toBeNull()
+    expect(costOf('claude-opus-5-50', 1, 1)).toBeNull()
     expect(labelOf('claude-opus-5-5[1m]')).toBe('opus-5.5')
+    expect(labelOf('claude-haiku-4-5-20251001')).toBe('haiku-4.5')
+  })
+
+  test('cache hits use each model’s published rate', () => {
+    // Opus 5.5 hits are $0.20/MTok and Fable 5.1 $0.25/MTok, not a tenth of input ($0.40 / $1.00).
+    expect(Math.abs((costOf('claude-opus-5-5', 0, 0, 1_000_000) ?? 0) - 0.2) < 1e-9).toBe(true)
+    expect(Math.abs((costOf('claude-fable-5-1', 0, 0, 1_000_000) ?? 0) - 0.25) < 1e-9).toBe(true)
+  })
+
+  test('each project gets its own ledger key', () => {
+    expect(ledgerKey('/work/a')).not.toBe(ledgerKey('/work/b'))
+    expect(ledgerKey('/work/a')).toBe(ledgerKey('/work/a'))
+    expect(ledgerKey('/work/a')).toMatch(/^ledger:[0-9a-f]{8}$/)
   })
 
   test('secrets are scrubbed from error text', () => {
@@ -116,6 +140,13 @@ describe('catalog and cells', () => {
     expect(text).not.toContain('ts_test_fake0000ffff')
     expect(text).not.toContain('abc.def-123')
     expect(redact('sk-or-v1-0123456789abcdef0123 leaked')).not.toContain('0123456789abcdef')
+  })
+
+  test('a long key is redacted before an error is shortened, so no prefix survives', () => {
+    const key = `opaque${'Q'.repeat(300)}`
+    const r = parseReply(`not json; echoed key=${key}`, 1, [key])
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error).not.toContain('opaqueQQQQ')
   })
 
   test('packed rasters are columns * rows cells of 12 bytes', () => {
